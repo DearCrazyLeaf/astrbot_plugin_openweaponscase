@@ -1,4 +1,4 @@
-import random
+﻿import random
 import json
 import re
 import os
@@ -431,13 +431,62 @@ class GifGenerator:
         self.SCROLL_DURATION = 3.5  
         
         try:
-            self.font = ImageFont.truetype("msyh.ttc", 16) 
+            self.font = ImageFont.truetype("msyh.ttc", 16)
             self.font_bold = ImageFont.truetype("msyhbd.ttc", 20)
             self.font_title = ImageFont.truetype("msyhbd.ttc", 24)
         except:
             self.font = ImageFont.load_default()
             self.font_bold = self.font
             self.font_title = self.font
+
+        # Optional emoji fonts (fallback only when glyph missing)
+        self.emoji_font_16 = self._load_emoji_font(16)
+        self.emoji_font_20 = self._load_emoji_font(20)
+        self.emoji_font_24 = self._load_emoji_font(24)
+
+    def _load_emoji_font(self, size: int):
+        candidates = [
+            "seguiemj.ttf",
+            "Segoe UI Emoji",
+            "C:\\Windows\\Fonts\\seguiemj.ttf",
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
+            "/System/Library/Fonts/Apple Color Emoji.ttc",
+        ]
+        for path in candidates:
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+        return None
+
+    def _font_supports(self, font, ch: str) -> bool:
+        try:
+            return font.getmask(ch).getbbox() is not None
+        except Exception:
+            return False
+
+    def _text_length(self, draw, text: str, font) -> float:
+        try:
+            return draw.textlength(text, font=font)
+        except Exception:
+            try:
+                return font.getlength(text)
+            except Exception:
+                return font.getsize(text)[0]
+
+    def _draw_text_with_fallback(self, draw, xy, text, fill, font, emoji_font=None):
+        x, y = xy
+        for ch in text:
+            if ch == "\n":
+                y += font.size + 6
+                x = xy[0]
+                continue
+            use_font = font
+            if emoji_font and (not self._font_supports(font, ch)) and self._font_supports(emoji_font, ch):
+                use_font = emoji_font
+            draw.text((x, y), ch, fill=fill, font=use_font)
+            x += self._text_length(draw, ch, use_font)
 
     async def generate(self, winner_item, case_items, case_img_url=None):
         filler_pool = [i for i in case_items if i.get("rln") != "非凡"]
@@ -572,7 +621,7 @@ class GifGenerator:
         img = Image.new("RGB", (width, height), (30, 30, 35))
         draw = ImageDraw.Draw(img)
         
-        draw.text((padding, 20), f"📦 个人库存总览", fill=(255, 215, 0), font=self.font_title)
+        self._draw_text_with_fallback(draw, (padding, 20), "📦 个人库存总览", fill=(255, 215, 0), font=self.font_title, emoji_font=self.emoji_font_24)
         draw.text((padding, 55), f"总物品数: {stats_data['total']}", fill=(200, 200, 200), font=self.font)
         
         s_y = header_h
@@ -588,7 +637,7 @@ class GifGenerator:
         
         list_y = header_h + stats_h
         draw.line([(padding, list_y-10), (width-padding, list_y-10)], fill=(60,60,60), width=1)
-        draw.text((padding, list_y-35), "💎 最近稀有掉落", fill=(255, 255, 255), font=self.font)
+        self._draw_text_with_fallback(draw, (padding, list_y-35), "💎 最近稀有掉落", fill=(255, 255, 255), font=self.font, emoji_font=self.emoji_font_16)
         
         for item in rare_items:
             bg_rect = [padding, list_y, width-padding, list_y+item_h]
@@ -629,35 +678,34 @@ class GifGenerator:
     #  生成菜单图片
     def generate_help_card(self):
         width = 600
-        height = 480
+        commands = [
+            ("📦 开箱[数量] [名称]", "开指定数量的武器箱/纪念包(如: 开箱 10 命悬)"),
+            ("🎒 库存", "查看当前的饰品库存统计(生成图片)"),
+            ("💰 查询价格 [名称]", "查询饰品BUFF/Steam参考价格"),
+            ("📜 武器箱列表", "查看所有可开箱的容器名称"),
+            ("🗑️ 清除库存", "清空自己的所有开箱记录(不可恢复)"),
+            ("🔄 更新武器箱", "(管理员) 从服务器同步最新数据"),
+            ("🧹 清除缓存", "(管理员) 清理本地临时图片文件"),
+        ]
+        height = max(480, 130 + len(commands) * 70)
         img = Image.new("RGB", (width, height), (30, 30, 35))
         draw = ImageDraw.Draw(img)
-        
+
         # 标题
-        draw.text((20, 20), "🔫 CS2 开箱模拟", fill=(255, 215, 0), font=self.font_title)
+        self._draw_text_with_fallback(draw, (20, 20), "🔫 CS2 开箱模拟", fill=(255, 215, 0), font=self.font_title, emoji_font=self.emoji_font_24)
         draw.text((20, 60), "v1.3", fill=(150, 150, 150), font=self.font)
-        
+
         # 分割线
         draw.line([(20, 90), (width-20, 90)], fill=(60, 60, 60), width=2)
-        
+
         # 指令列表
-        commands = [
-            ("📦 开箱 [数量] [名称]", "开启指定数量的武器箱/纪念包 (如: 开箱 10 命悬)"),
-            ("🎒 库存", "查看当前的饰品库存统计 (生成图片)"),
-            ("💰 查询价格 [名称]", "查询饰品BUFF/Steam参考价格"),
-            ("📜 武器箱列表", "查看所有可开启的容器名称"),
-            ("🗑️ 清除库存", "清空自己的所有开箱记录 (不可恢复)"),
-            ("🔄 更新武器箱", "(管理员) 从服务器同步最新数据"),
-            ("🧹 清除缓存", "(管理员) 清理本地临时图片文件")
-        ]
-        
         y = 110
         for cmd, desc in commands:
-            # 指令名 (高亮)
-            draw.text((30, y), cmd, fill=(255, 255, 255), font=self.font_bold)
+            # 指令名(高亮)
+            self._draw_text_with_fallback(draw, (30, y), cmd, fill=(255, 255, 255), font=self.font_bold, emoji_font=self.emoji_font_20)
             # 描述 (灰色)
             draw.text((30, y+30), desc, fill=(180, 180, 180), font=self.font)
-            y += 70 # 行间距
+            y += 70
 
         output = BytesIO()
         img.save(output, format="PNG")
@@ -813,10 +861,10 @@ class CasePlugin(Star):
             "rln": quality
         }
 
-    def _parse_command(self, msg: str, max_per_request: int) -> tuple:
+    def _parse_command(self, msg: str) -> tuple:
         clean_msg = msg.replace("开箱", "", 1).strip()
         if not clean_msg:
-            return None, 1, 1
+            return None, 1
 
         requested_count = 1
         case_name = clean_msg
@@ -836,8 +884,7 @@ class CasePlugin(Star):
                 case_name = clean_msg[:-len(num_str)].strip()
 
         requested_count = max(1, requested_count)
-        clamped_count = min(requested_count, max_per_request)
-        return case_name.strip(), clamped_count, requested_count
+        return case_name.strip(), requested_count
 
     @event_message_type(EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
@@ -960,9 +1007,12 @@ class CasePlugin(Star):
         max_per_request = self._max_open_per_request()
         max_per_day = self._max_open_per_day()
 
-        case_name, count, requested_count = self._parse_command(msg, max_per_request)
+        case_name, requested_count = self._parse_command(msg)
         if not case_name:
             yield event.plain_result("❌ 请输入开箱名称")
+            return
+        if requested_count > max_per_request:
+            yield event.plain_result(f"❌ 单次开箱上限为 {max_per_request}，请调整数量")
             return
 
         target_case = None
@@ -985,6 +1035,7 @@ class CasePlugin(Star):
         period_key = self._current_period_key(now_dt)
         now_text = now_dt.strftime("%Y-%m-%d %H:%M:%S")
 
+        count = requested_count
         allowed_count, used_today, remaining_today = self.db.consume_daily_quota(
             user_key=user_key,
             period_key=period_key,
@@ -1001,8 +1052,6 @@ class CasePlugin(Star):
             return
 
         limit_msgs = []
-        if requested_count > max_per_request:
-            limit_msgs.append(f"单次已自动限制为 {max_per_request}")
         if allowed_count < count and max_per_day > 0:
             limit_msgs.append(f"当前周期额度不足，本次按可用额度开箱 {allowed_count} 次")
 
@@ -1052,16 +1101,16 @@ class CasePlugin(Star):
                     chain.append(Comp.Image.fromURL(winner["img"]))
 
             ctype = self._identify_container_type(target_case)
-            info = f"\n🎵 {winner['name']} ({winner['quality']})\n"
+            info = f"\n🎁 {winner['name']} ({winner['quality']})\n"
             if ctype != "capsule":
-                info += f"🔡 {winner['wear_level']} ({winner['wear_value']:.5f})"
+                info += f"🔧 {winner['wear_level']} ({winner['wear_value']:.5f})"
             chain.append(Comp.Plain(info))
 
             chain.append(Comp.Plain(f"\n📦 总库存: {total_count}"))
             if max_per_day > 0:
-                chain.append(Comp.Plain(f"\n📳 今日已开: {used_today}/{max_per_day}，剩余: {remaining_today}"))
+                chain.append(Comp.Plain(f"\n今日已开: {used_today}/{max_per_day}，剩余: {remaining_today}"))
             if limit_msgs:
-                chain.append(Comp.Plain(f"\n⚩ 提示: {'；'.join(limit_msgs)}"))
+                chain.append(Comp.Plain(f"\n提示: {'；'.join(limit_msgs)}"))
             yield event.chain_result(chain)
         else:
             chain = [Comp.At(qq=user_id)]
@@ -1077,7 +1126,7 @@ class CasePlugin(Star):
                     best_item = item
 
             if best_item and best_score > 0:
-                chain.append(Comp.Plain(" ✅ 欧气爆发！开出了稀有物品！\n"))
+                chain.append(Comp.Plain(" ✨ 欧气爆发！开出了稀有物品！\n"))
                 try:
                     all_possible_items = self.case_data[target_case]
                     gif_bytes = await self.gif_gen.generate(best_item, all_possible_items)
@@ -1088,15 +1137,15 @@ class CasePlugin(Star):
                 except:
                     pass
 
-            chain.append(Comp.Plain(f" ⚿ 开启【{target_case}】x{count}\n"))
+            chain.append(Comp.Plain(f" ⚡ 开启【{target_case}】x{count}\n"))
             if count <= 10:
                 for item in items_res:
                     if item.get("img"):
                         chain.append(Comp.Image.fromURL(item["img"]))
-                    info = f"🎵 {item['name']} ({item['quality']})\n"
+                    info = f"🎁 {item['name']} ({item['quality']})\n"
                     ctype = self._identify_container_type(target_case)
                     if ctype != "capsule":
-                        info += f"🔡 {item['wear_level']} ({item['wear_value']:.5f})\n"
+                        info += f"🔧 {item['wear_level']} ({item['wear_value']:.5f})\n"
                     chain.append(Comp.Plain(info))
             else:
                 stats = {}
@@ -1106,24 +1155,24 @@ class CasePlugin(Star):
                     if item.get("is_special") or item['quality'] in ["隐秘", "非凡", "Contraband"]:
                         rare.append(item)
 
-                chain.append(Comp.Plain("\n📳 统计结果：\n"))
+                chain.append(Comp.Plain("\n📊 统计结果：\n"))
                 for q, c in stats.items():
                     chain.append(Comp.Plain(f"· {q}: {c}个\n"))
 
                 if rare:
-                    chain.append(Comp.Plain("\n👐 稀有掉落：\n"))
+                    chain.append(Comp.Plain("\n💎 稀有掉落：\n"))
                     for item in rare:
                         if item.get("img"):
                             chain.append(Comp.Image.fromURL(item["img"]))
                         chain.append(Comp.Plain(f"▸ {item['name']}\n"))
                         ctype = self._identify_container_type(target_case)
                         if ctype != "capsule":
-                            chain.append(Comp.Plain(f"   🔡 {item['wear_level']} ({item['wear_value']:.5f})\n"))
+                            chain.append(Comp.Plain(f"   🔧 {item['wear_level']} ({item['wear_value']:.5f})\n"))
             chain.append(Comp.Plain(f"\n📦 总库存: {total_count}"))
             if max_per_day > 0:
-                chain.append(Comp.Plain(f"\n📳 今日已开: {used_today}/{max_per_day}，剩余: {remaining_today}"))
+                chain.append(Comp.Plain(f"\n今日已开: {used_today}/{max_per_day}，剩余: {remaining_today}"))
             if limit_msgs:
-                chain.append(Comp.Plain(f"\n⚩ 提示: {'；'.join(limit_msgs)}"))
+                chain.append(Comp.Plain(f"\n提示: {'；'.join(limit_msgs)}"))
             yield event.chain_result(chain)
 
     async def _handle_purge(self, event):
@@ -1195,4 +1244,6 @@ class CasePlugin(Star):
             p = res.split('\n',1)
             yield event.chain_result([Comp.At(qq=event.get_sender_id()), Comp.Image.fromURL(p[0]), Comp.Plain("\n"+p[1])])
         else: yield event.plain_result(res)
+
+
 
