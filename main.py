@@ -99,9 +99,25 @@ class NetworkManager:
 
 # ================= 辅助类：图片管理 =================
 class ImageManager:
-    def __init__(self):
+    def __init__(self, retention_days: int = 0):
         os.makedirs(IMAGES_DIR, exist_ok=True)
         self.ssl_context = ssl._create_unverified_context()
+        self._cleanup_cache(retention_days)
+
+    def _cleanup_cache(self, retention_days: int):
+        if retention_days <= 0:
+            return
+        cutoff = time.time() - (retention_days * 86400)
+        try:
+            for name in os.listdir(IMAGES_DIR):
+                path = os.path.join(IMAGES_DIR, name)
+                try:
+                    if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                        os.remove(path)
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     def _get_file_path(self, url):
         hash_name = hashlib.md5(url.encode()).hexdigest()
@@ -204,7 +220,7 @@ class DatabaseManager:
 
     def consume_daily_quota(self, user_key, period_key, request_count, daily_limit, now_text):
         """
-        原子扣减每日额度。
+        每日额度检查区域
         返回: (allowed_count, used_today, remaining_today)
         """
         if request_count <= 0:
@@ -439,55 +455,6 @@ class GifGenerator:
             self.font_bold = self.font
             self.font_title = self.font
 
-        # Optional emoji fonts (fallback only when glyph missing)
-        self.emoji_font_16 = self._load_emoji_font(16)
-        self.emoji_font_20 = self._load_emoji_font(20)
-        self.emoji_font_24 = self._load_emoji_font(24)
-
-    def _load_emoji_font(self, size: int):
-        candidates = [
-            "seguiemj.ttf",
-            "Segoe UI Emoji",
-            "C:\\Windows\\Fonts\\seguiemj.ttf",
-            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-            "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
-            "/System/Library/Fonts/Apple Color Emoji.ttc",
-        ]
-        for path in candidates:
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                continue
-        return None
-
-    def _font_supports(self, font, ch: str) -> bool:
-        try:
-            return font.getmask(ch).getbbox() is not None
-        except Exception:
-            return False
-
-    def _text_length(self, draw, text: str, font) -> float:
-        try:
-            return draw.textlength(text, font=font)
-        except Exception:
-            try:
-                return font.getlength(text)
-            except Exception:
-                return font.getsize(text)[0]
-
-    def _draw_text_with_fallback(self, draw, xy, text, fill, font, emoji_font=None):
-        x, y = xy
-        for ch in text:
-            if ch == "\n":
-                y += font.size + 6
-                x = xy[0]
-                continue
-            use_font = font
-            if emoji_font and (not self._font_supports(font, ch)) and self._font_supports(emoji_font, ch):
-                use_font = emoji_font
-            draw.text((x, y), ch, fill=fill, font=use_font)
-            x += self._text_length(draw, ch, use_font)
-
     async def generate(self, winner_item, case_items, case_img_url=None):
         filler_pool = [i for i in case_items if i.get("rln") != "非凡"]
         if not filler_pool: filler_pool = case_items
@@ -621,7 +588,7 @@ class GifGenerator:
         img = Image.new("RGB", (width, height), (30, 30, 35))
         draw = ImageDraw.Draw(img)
         
-        self._draw_text_with_fallback(draw, (padding, 20), "📦 个人库存总览", fill=(255, 215, 0), font=self.font_title, emoji_font=self.emoji_font_24)
+        draw.text((padding, 20), "📦 个人库存总览", fill=(255, 215, 0), font=self.font_title)
         draw.text((padding, 55), f"总物品数: {stats_data['total']}", fill=(200, 200, 200), font=self.font)
         
         s_y = header_h
@@ -637,7 +604,7 @@ class GifGenerator:
         
         list_y = header_h + stats_h
         draw.line([(padding, list_y-10), (width-padding, list_y-10)], fill=(60,60,60), width=1)
-        self._draw_text_with_fallback(draw, (padding, list_y-35), "💎 最近稀有掉落", fill=(255, 255, 255), font=self.font, emoji_font=self.emoji_font_16)
+        draw.text((padding, list_y-35), "💎 最近稀有掉落", fill=(255, 255, 255), font=self.font)
         
         for item in rare_items:
             bg_rect = [padding, list_y, width-padding, list_y+item_h]
@@ -692,7 +659,7 @@ class GifGenerator:
         draw = ImageDraw.Draw(img)
 
         # 标题
-        self._draw_text_with_fallback(draw, (20, 20), "🔫 CS2 开箱模拟", fill=(255, 215, 0), font=self.font_title, emoji_font=self.emoji_font_24)
+        draw.text((20, 20), "🔫 CS2 开箱模拟", fill=(255, 215, 0), font=self.font_title)
         draw.text((20, 60), "v1.3", fill=(150, 150, 150), font=self.font)
 
         # 分割线
@@ -702,7 +669,7 @@ class GifGenerator:
         y = 110
         for cmd, desc in commands:
             # 指令名(高亮)
-            self._draw_text_with_fallback(draw, (30, y), cmd, fill=(255, 255, 255), font=self.font_bold, emoji_font=self.emoji_font_20)
+            draw.text((30, y), cmd, fill=(255, 255, 255), font=self.font_bold)
             # 描述 (灰色)
             draw.text((30, y+30), desc, fill=(180, 180, 180), font=self.font)
             y += 70
@@ -721,7 +688,8 @@ class CasePlugin(Star):
         self.api_token = self.config.get('api_token', 'GWBR21M7K474Z3R5Y5H8K9J6')
         
         self.net_mgr = NetworkManager(self.api_token) 
-        self.img_mgr = ImageManager()
+        cache_days = self._safe_int(self.config.get("cache_retention_days", 0), 0, minimum=0)
+        self.img_mgr = ImageManager(cache_days)
         self.gif_gen = GifGenerator(self.img_mgr)
         self.db = DatabaseManager() 
         
